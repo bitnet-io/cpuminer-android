@@ -42,7 +42,7 @@
 #include "yespower.h"
 #include "yespower-opt.c"
 
-static const yespower_params_t yespower_BITZENY = {YESPOWER_0_5, 2048, 8, "Client Key", 10};
+static const yespower_params_t yespower_BITZENY = {YESPOWER_1_0, 4096, 16, NULL, 0};
 
 void yespower_hash( const char *input, char *output, uint32_t len )
 {
@@ -60,28 +60,50 @@ static int pretest(const uint32_t *hash, const uint32_t *target)
 	return hash[7] < target[7];
 }
 
-int scanhash_yespower(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
-		      uint32_t max_nonce, unsigned long *hashes_done)
+int scanhash_yespower(int thr_id, uint32_t *pdata,
+	const uint32_t *ptarget,
+	uint32_t max_nonce, unsigned long *hashes_done)
 {
-	uint32_t data[20] __attribute__((aligned(64)));
-	uint32_t hash[8] __attribute__((aligned(64)));
+	static const yespower_params_t params = {
+		.version = YESPOWER_1_0,
+		.N = 4096,
+		.r = 16,
+		.pers = NULL,
+		.perslen = 0
+	};
+	union {
+		uint8_t u8[8];
+		uint32_t u32[20];
+	} data;
+	union {
+		yespower_binary_t yb;
+		uint32_t u32[7];
+	} hash;
 	uint32_t n = pdata[19] - 1;
-	const uint32_t first_nonce = pdata[19];
+	const uint32_t Htarg = ptarget[7];
+	int i;
 
-	for (int k = 0; k < 19; k++) {
-		be32enc(&data[k], pdata[k]);
-	}
+	for (i = 0; i < 19; i++)
+		be32enc(&data.u32[i], pdata[i]);
+
 	do {
-		be32enc(&data[19], ++n);
-		yespower_hash((char *)data, (char *)hash, 80);
-		if (pretest(hash, ptarget) && fulltest(hash, ptarget)) {
-			pdata[19] = n;
-			*hashes_done = n - first_nonce + 1;
-			return 1;
+		be32enc(&data.u32[19], ++n);
+
+		if (yespower_tls(data.u8, 80, &params, &hash.yb))
+			abort();
+
+		if (le32dec(&hash.u32[7]) <= Htarg) {
+			for (i = 0; i < 7; i++)
+				hash.u32[i] = le32dec(&hash.u32[i]);
+			if (fulltest(hash.u32, ptarget)) {
+				*hashes_done = n - pdata[19] + 1;
+				pdata[19] = n;
+				return 1;
+			}
 		}
 	} while (n < max_nonce && !work_restart[thr_id].restart);
 
-	*hashes_done = n - first_nonce + 1;
+	*hashes_done = n - pdata[19] + 1;
 	pdata[19] = n;
 	return 0;
 }

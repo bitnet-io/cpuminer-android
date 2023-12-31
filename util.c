@@ -8,6 +8,14 @@
  * Software Foundation; either version 2 of the License, or (at your option)
  * any later version.  See COPYING for more details.
  */
+//
+//
+// ottylab update history <ottylab@gmail.com>
+//
+// 2018/02/17 @001 Support Android logcat
+// 2018/02/17 @002 Log with callback
+// 2018/08/20 @003 User default Log when callback is null
+//
 
 #define _GNU_SOURCE
 #include "cpuminer-config.h"
@@ -36,6 +44,12 @@
 #include "compat.h"
 #include "miner.h"
 #include "elist.h"
+//@001A start
+#ifdef ANDROID
+#include <android/log.h>
+#endif
+//@001A end
+void (*vprintf_cb)(const char *format, va_list arg); //@002A
 
 struct data_buffer {
 	void		*buf;
@@ -88,7 +102,37 @@ void applog(int prio, const char *fmt, ...)
 			syslog(prio, "%s", buf);
 	}
 #else
-	if (0) {}
+//@001A Start
+#ifdef ANDROID
+	if (!vprintf_cb) { //@002A
+		int android_prio ;
+		switch(prio) {
+			case LOG_ERR:
+				android_prio = ANDROID_LOG_ERROR;
+				break;
+			case LOG_WARNING:
+				android_prio = ANDROID_LOG_WARN;
+				break;
+			case LOG_NOTICE:
+				android_prio = ANDROID_LOG_INFO;
+				break;
+			case LOG_INFO:
+				android_prio = ANDROID_LOG_INFO;
+				break;
+			case LOG_DEBUG:
+				android_prio = ANDROID_LOG_DEBUG;
+				break;
+			default:
+				android_prio = ANDROID_LOG_UNKNOWN;
+				break;
+		}
+		__android_log_vprint(android_prio, "libcpuminer", fmt, ap);
+	}
+#else
+	if (0) { }
+#endif
+//@001A End
+	//if (0) { }//@001D
 #endif
 	else {
 		char *f;
@@ -114,7 +158,13 @@ void applog(int prio, const char *fmt, ...)
 			tm.tm_sec,
 			fmt);
 		pthread_mutex_lock(&applog_lock);
-		vfprintf(stderr, f, ap);	/* atomic write to stderr */
+		//@003A start
+		if (vprintf_cb) {
+			vprintf_cb(f, ap); //@002A
+		} else {
+			vfprintf(stderr, f, ap);	/* atomic write to stderr */
+		}
+		//@003A end
 		fflush(stderr);
 		pthread_mutex_unlock(&applog_lock);
 	}
